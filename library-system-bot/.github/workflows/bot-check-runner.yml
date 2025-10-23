@@ -1,0 +1,96 @@
+name: Bot Check Runner
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to check'
+        required: true
+        type: string
+      command:
+        description: 'Command to run'
+        required: true
+        type: string
+        default: 'docker-compose -f docker-compose.yml build'
+      issue_number:
+        description: 'Issue/PR number to comment on'
+        required: false
+        type: number
+
+jobs:
+  run-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Run command
+        id: run_command
+        continue-on-error: true
+        run: |
+          echo "Running: ${{ inputs.command }}"
+          ${{ inputs.command }} 2>&1 | tee output.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
+          
+      - name: Comment on issue/PR
+        if: inputs.issue_number
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const exitCode = '${{ steps.run_command.outputs.exit_code }}';
+            const success = exitCode === '0';
+            
+            let output = '';
+            try {
+              output = fs.readFileSync('output.log', 'utf8');
+              // Truncate if too long
+              if (output.length > 60000) {
+                output = output.substring(0, 60000) + '\n\n... (truncated)';
+              }
+            } catch (e) {
+              output = 'No output captured';
+            }
+            
+            const emoji = success ? '✅' : '❌';
+            const status = success ? 'succeeded' : 'failed';
+            
+            const body = `${emoji} **Check ${status}**
+            
+**Branch:** \`${{ inputs.branch }}\`
+**Command:** \`${{ inputs.command }}\`
+**Exit Code:** ${exitCode}
+
+<details>
+<summary>📋 Command Output</summary>
+
+\`\`\`
+${output}
+\`\`\`
+
+</details>
+
+<sub>🤖 Run by @${{ github.actor }} via library-system-bot | [Workflow Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})</sub>`;
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ inputs.issue_number }},
+              body: body
+            });

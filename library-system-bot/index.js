@@ -1,148 +1,136 @@
+import { initConfig, isConfigValid, getConfig } from './src/utils/config.js';
+import { handleIssueOpened, handleIssueLabeled, handleIssueEdited } from './src/handlers/issue-handler.js';
+import { handlePullRequestOpened, handlePullRequestLabeled, handlePullRequestEdited } from './src/handlers/pull-request-handler.js';
+import { handleIssueComment } from './src/handlers/comment-handler.js';
+import { displayBanner, displayStartupInfo } from './src/utils/banner.js';
+
 /**
+ * Library System Bot - Main Entry Point
+ * 
+ * A GitHub App that automates project management for library-system-v3
+ * 
+ * Features:
+ * - Automatically adds issues/PRs to GitHub Projects
+ * - Sets priority based on labels
+ * - Posts triage templates
+ * - Responds to bot mentions with commands
+ * 
  * @param {import('probot').Probot} app
  */
 export default (app) => {
-  app.log.info("library-systembot loaded");
+  // Initialize configuration
+  const config = initConfig();
+  
+  // Display fancy startup banner
+  displayBanner(app.log);
+  displayStartupInfo(app.log, config);
+  
+  // Validate configuration
+  if (!isConfigValid()) {
+    app.log.warn('');
+    app.log.warn('═══════════════════════════════════════════════════════════');
+    app.log.warn('WARNING: Bot is not fully configured!');
+    app.log.warn('═══════════════════════════════════════════════════════════');
+    app.log.warn('Please set PROJECT_ID and PRIORITY_FIELD_ID in .env');
+    app.log.warn('The bot will start but project management features will be limited');
+    app.log.warn('See README.md for configuration instructions');
+    app.log.warn('');
+  } else {
+    app.log.info('All required configuration validated successfully!');
+    app.log.info('');
+  }
 
-  const PROJECT_ID = process.env.PROJECT_ID; // GitHub Project V2 id
-  const PRIORITY_FIELD_ID = process.env.PRIORITY_FIELD_ID;    // "Priority" field id (single-select)
-  const OPTION_MAP = {                         // map label -> option id
-    p0: process.env.p0,
-    p1: process.env.p1,
-    p2: process.env.p2,
-    p3: process.env.p3
-  };
-
-  // helpers
-  const pickPriorityLabel = (payload) => {
-    const direct = payload.label?.name?.toLowerCase();
-    if (direct && /^p[0-3]$/.test(direct)) return direct;
-
-    const labels =
-      (payload.issue?.labels || payload.pull_request?.labels || [])
-        .map((l) => (typeof l === "string" ? l : l.name?.toLowerCase()))
-        .filter(Boolean);
-
-    return labels.find((n) => /^p[0-3]$/.test(n)) || null;
-  };
-
-  const getContentNodeId = (payload) =>
-    payload.issue?.node_id || payload.pull_request?.node_id || null;
-
-  const ensureProjectItem = async (context, projectId, contentNodeId) => {
-    const added = await context.octokit.graphql(
-      `
-        mutation($projectId: ID!, $contentId: ID!) {
-          addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) {
-            item { id }
-          }
-        }
-      `,
-      { projectId, contentId: contentNodeId }
-    ).catch(() => null);
-
-    if (added?.addProjectV2ItemById?.item?.id) {
-      return added.addProjectV2ItemById.item.id;
+  // ============================================
+  // ISSUE HANDLERS
+  // ============================================
+  
+  app.on('issues.opened', async (context) => {
+    try {
+      await handleIssueOpened(context);
+    } catch (error) {
+      context.log.error('Error in issues.opened handler:', error);
     }
+  });
 
-    const found = await context.octokit.graphql(
-      `
-        query($contentId: ID!, $projectId: ID!) {
-          node(id: $contentId) {
-            ... on Issue {
-              projectItems(first: 50, includeArchived: false) {
-                nodes { id project { id } }
-              }
-            }
-            ... on PullRequest {
-              projectItems(first: 50, includeArchived: false) {
-                nodes { id project { id } }
-              }
-            }
-          }
-        }
-      `,
-      { contentId: contentNodeId, projectId }
-    );
-
-    const nodes = found?.node?.projectItems?.nodes || [];
-    const hit = nodes.find((n) => n.project?.id === projectId);
-    return hit?.id || null;
-  };
-
-  const setPriority = async (context, { projectId, itemId, fieldId, optionId }) => {
-    if (!itemId || !optionId) return;
-    await context.octokit.graphql(
-      `
-        mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
-          updateProjectV2ItemFieldValue(input: {
-            projectId: $projectId,
-            itemId: $itemId,
-            fieldId: $fieldId,
-            value: { singleSelectOptionId: $optionId }
-          }) { clientMutationId }
-        }
-      `,
-      { projectId, itemId, fieldId, optionId }
-    );
-  };
-
-  const maybePostTriage = async (context) => {
-    const labels = (context.payload.issue?.labels || []).map((l) => (typeof l === "string" ? l : l.name));
-    const hasTriage = labels.includes("Triage Needed");
-    if (!hasTriage) return;
-
-    const body = `@The-CS-Nerds/library-devs, please complete the attached triage:
-
-### Assessment:
-**Reproducible** - Yes / No  
-**Priority** - p0 / p1 / p2 / p3  
-**Impact** -  
-**Suspected Cause** -  
-
-### Plan for Resolution:
-- [ ] **Step 1** -  
-- [ ] **Step 2** -  
-
-### Other:
-- **Affected files / modules** -  
-- **Other relevant issues/PRs** -`;
-
-    await context.octokit.issues.createComment(context.issue({ body }));
-  };
-
-  const handler = async (context) => {
-    // triage template only applies to issues
-    if (context.payload.issue) {
-      await maybePostTriage(context);
+  app.on('issues.labeled', async (context) => {
+    try {
+      await handleIssueLabeled(context);
+    } catch (error) {
+      context.log.error('Error in issues.labeled handler:', error);
     }
+  });
 
-    const label = pickPriorityLabel(context.payload);
-    if (!label) return;
+  app.on('issues.edited', async (context) => {
+    try {
+      await handleIssueEdited(context);
+    } catch (error) {
+      context.log.error('Error in issues.edited handler:', error);
+    }
+  });
 
-    const contentId = getContentNodeId(context.payload);
-    if (!contentId) return;
+  // ============================================
+  // PULL REQUEST HANDLERS
+  // ============================================
 
-    const itemId = await ensureProjectItem(context, PROJECT_ID, contentId);
-    await setPriority(context, {
-      projectId: PROJECT_ID,
-      itemId,
-      fieldId: PRIORITY_FIELD_ID,
-      optionId: OPTION_MAP[label]
-    });
+  app.on('pull_request.opened', async (context) => {
+    try {
+      await handlePullRequestOpened(context);
+    } catch (error) {
+      context.log.error('Error in pull_request.opened handler:', error);
+    }
+  });
 
-    context.log.info(`Set project priority=${label} for item ${itemId}`);
-  };
+  app.on('pull_request.labeled', async (context) => {
+    try {
+      await handlePullRequestLabeled(context);
+    } catch (error) {
+      context.log.error('Error in pull_request.labeled handler:', error);
+    }
+  });
 
-  app.on(
-    [
-      "issues.opened",
-      "issues.labeled",
-      "issues.edited",
-      "pull_request.opened",
-      "pull_request.labeled",
-      "pull_request.edited"
-    ],
-    handler
-  );
+  app.on('pull_request.edited', async (context) => {
+    try {
+      await handlePullRequestEdited(context);
+    } catch (error) {
+      context.log.error('Error in pull_request.edited handler:', error);
+    }
+  });
+
+  // ============================================
+  // COMMENT HANDLERS (Bot Commands)
+  // ============================================
+
+  app.on('issue_comment.created', async (context) => {
+    try {
+      await handleIssueComment(context);
+    } catch (error) {
+      context.log.error('Error in issue_comment.created handler:', error);
+    }
+  });
+
+  // ============================================
+  // READY!
+  // ============================================
+
+  app.log.info('');
+  app.log.info('╔═══════════════════════════════════════════════════════════════╗');
+  app.log.info('║  Library System Bot is READY and listening for events       ║');
+  app.log.info('╚═══════════════════════════════════════════════════════════════╝');
+  app.log.info('');
+  app.log.info('Quick Links:');
+  app.log.info('  Documentation: https://github.com/The-CS-Nerds/library-system-bot');
+  app.log.info('  Report Issues: https://github.com/The-CS-Nerds/library-system-bot/issues');
+  app.log.info('  Discussions:   https://github.com/The-CS-Nerds/library-system-bot/discussions');
+  app.log.info('');
+  app.log.info('Tip: Mention @library-system-bot in any issue/PR comment');
+  app.log.info('');
+  
+  // Handle graceful shutdown
+  process.on('SIGTERM', () => {
+    app.log.info('');
+    app.log.info('Received SIGTERM, shutting down gracefully...');
+    app.log.info('Thanks for using Library System Bot!');
+    app.log.info('');
+    process.exit(0);
+  });
 };
