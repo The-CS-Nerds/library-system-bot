@@ -37,8 +37,9 @@ export function getVersionInfo() {
  */
 function getProbotVersion() {
   try {
-    const fs = await import('fs');
-    const path = await import('path');
+    // Use synchronous readFileSync since we're in ESM
+    import fs from 'fs';
+    import path from 'path';
     const pkgPath = path.join(process.cwd(), 'package.json');
     const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
     return pkg.dependencies?.probot || 'unknown';
