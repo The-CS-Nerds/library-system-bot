@@ -1,3 +1,6 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
+
 /**
  * Display a fun banner when the bot starts
  * @param {import('probot').Logger} logger
@@ -37,11 +40,8 @@ export function getVersionInfo() {
  */
 function getProbotVersion() {
   try {
-    // Use synchronous readFileSync since we're in ESM
-    import fs from 'fs';
-    import path from 'path';
-    const pkgPath = path.join(process.cwd(), 'package.json');
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    const pkgPath = join(process.cwd(), 'package.json');
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
     return pkg.dependencies?.probot || 'unknown';
   } catch {
     return 'unknown';
